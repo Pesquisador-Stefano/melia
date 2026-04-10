@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Threading.Tasks;
 using Melia.Barracks.Database;
 using Melia.Barracks.Events;
 using Melia.Barracks.Network;
