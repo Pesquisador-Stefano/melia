@@ -324,6 +324,12 @@ namespace Melia.Web
 
 			switch (message)
 			{
+				case ShutdownMessage shutdownMessage:
+				{
+					Log.Info("Received shutdown command: {0}", shutdownMessage.Reason);
+					Environment.Exit(0);
+					break;
+				}
 				case ServerUpdateMessage serverUpdateMessage:
 				{
 					this.ServerList.Update(serverUpdateMessage);

@@ -166,6 +166,12 @@ namespace Melia.Social
 		{
 			switch (message)
 			{
+				case ShutdownMessage shutdownMessage:
+				{
+					Log.Info("Received shutdown command: {0}", shutdownMessage.Reason);
+					Environment.Exit(0);
+					break;
+				}
 				case ShoutMessage shoutMessage:
 				{
 					// This feels like a hack. Perhaps we should split up chat

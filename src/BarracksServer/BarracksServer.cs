@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using Melia.Barracks.Database;
 using Melia.Barracks.Events;
 using Melia.Barracks.Network;
@@ -187,6 +188,12 @@ namespace Melia.Barracks
 
 			switch (message)
 			{
+				case ShutdownMessage shutdownMessage:
+				{
+					Log.Info("Received shutdown command: {0}", shutdownMessage.Reason);
+					Environment.Exit(0);
+					break;
+				}
 				case ServerUpdateMessage serverUpdateMessage:
 				{
 					if (serverUpdateMessage.ServerType == ServerType.Zone)
