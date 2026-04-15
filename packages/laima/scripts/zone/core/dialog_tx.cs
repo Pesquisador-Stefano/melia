@@ -480,21 +480,17 @@ public class DialogTxFunctionsScript : GeneralScript
 
 			targetItem.RemoveGemAtSocket(selectedSlot);
 			var prevLv = gemToExtract.GemLevel - 1;
-			Math.Max(prevLv, 0);
 
-			if (prevLv >= 1)
-			{
-				var prevExp = ZoneServer.Instance.Data.ItemExpDb.GetTotalExp(gemToExtract.Data.EquipExpGroup, prevLv);
-				gemToExtract.Properties.SetFloat(PropertyName.ItemExp, prevExp);
-				gemToExtract.Properties.SetFloat(PropertyName.Level, prevLv);
+			var prevExp = ZoneServer.Instance.Data.ItemExpDb.GetTotalExp(gemToExtract.Data.EquipExpGroup, prevLv);
+			gemToExtract.Properties.SetFloat(PropertyName.ItemExp, prevExp);
+			gemToExtract.Properties.SetFloat(PropertyName.Level, prevLv);
 
-				if (gemToExtract.Properties.TryGetFloat(PropertyName.GemRoastingLv, out var gemRoastingLv))
-					gemToExtract.Properties.SetFloat(PropertyName.GemRoastingLv, gemRoastingLv);
+			if (gemToExtract.Properties.TryGetFloat(PropertyName.GemRoastingLv, out var gemRoastingLv))
+				gemToExtract.Properties.SetFloat(PropertyName.GemRoastingLv, gemRoastingLv);
 
-				gemToExtract.UpdateGemStatOptions();
+			gemToExtract.UpdateGemStatOptions();
 
-				character.Inventory.Add(gemToExtract);
-			}
+			character.Inventory.Add(gemToExtract);
 
 			character.InvalidateProperties(targetItem);
 
