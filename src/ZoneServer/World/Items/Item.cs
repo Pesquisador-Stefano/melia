@@ -248,7 +248,7 @@ namespace Melia.Zone.World.Items
 					return false;
 
 				var reinforceValue = this.Properties.GetFloat(PropertyName.Reinforce_2);
-				if (reinforceValue < 0 || reinforceValue >= 40)
+				if (reinforceValue < 0 || reinforceValue >= 17)
 					return false;
 
 				return true;
