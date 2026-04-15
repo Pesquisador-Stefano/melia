@@ -3,8 +3,8 @@
 
 config.ChangeXMLConfig('ShowCoinGetGauge', 0)
 config.ChangeXMLConfig('ShowPCBangTimer', 0)
-config.ChangeXMLConfig('ShowPerformanceValue', 0)
+-- config.ChangeXMLConfig('ShowPerformanceValue', 0)
 
 ui.CloseFrame('pcbang_point_timer');
 ui.CloseFrame('coin_get_gauge');
-ui.CloseFrame('fps');
+-- ui.CloseFrame('fps');
