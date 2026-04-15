@@ -558,25 +558,10 @@ public class RefiningItemScripts : GeneralScript
 		{
 			var moruStrArg = moruItem.Data?.Script?.StrArg ?? "";
 
-			if (moruStrArg == "gold_Moru" || moruStrArg == "blessed_gold_Moru")
-			{
-				if (itemReinCount >= 12)
-					invItem.Properties.SetFloat(PropertyName.Reinforce_2, 10);
-			}
-			else if (moruStrArg == "unique_gold_Moru" || moruStrArg == "blessed_ruby_Moru")
-			{
-				if (itemReinCount >= 16)
-					invItem.Properties.SetFloat(PropertyName.Reinforce_2, 15);
-			}
-			else if (invItem.Potential > 0)
-			{
-				var prBefore = invItem.Properties.GetFloat(PropertyName.PR);
-				invItem.Properties.Modify(PropertyName.PR, -1);
-				Log.Debug("ReinforceResult: {0}'s '{1}' (ObjId:{2}) PR: {3} -> {4}", character.Name, invItem.Name, invItem.ObjectId, prBefore, invItem.Properties.GetFloat(PropertyName.PR));
-			}
-			else if (!IsAnvilForZeroPotential(moruItem))
-			{
-				isBreakItem = true;
+			if (moruStrArg != "gold_Moru" && moruStrArg != "blessed_gold_Moru") {
+				var prBefore = invItem.Properties.GetFloat(PropertyName.Reinforce_2);
+				invItem.Properties.Modify(PropertyName.Reinforce_2, -1);
+				Log.Debug("ReinforceResult: {0}'s '{1}' (ObjId:{2}) Reinforce_2: {3} -> {4}", character.Name, invItem.Name, invItem.ObjectId, prBefore, invItem.Properties.GetFloat(PropertyName.PR));
 			}
 		}
 
