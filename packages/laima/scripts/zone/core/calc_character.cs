@@ -656,7 +656,9 @@ public class CharacterCalculationsScript : GeneralScript
 		var byBuff = properties.GetFloat(PropertyName.REST_BM, 0) + properties.GetFloat(PropertyName.RSta_BM, 0);
 		var value = baseValue + byBuff;
 
-		if (character.Buffs.Has(BuffId.SitRest))
+		if (character.Movement.IsMoving)
+			value /= 2;
+		else if (character.Buffs.Has(BuffId.SitRest))
 			value *= 2;
 
 		return (int)value;

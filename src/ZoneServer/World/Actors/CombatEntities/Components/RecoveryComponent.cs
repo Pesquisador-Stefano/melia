@@ -169,8 +169,9 @@ namespace Melia.Zone.World.Actors.CombatEntities.Components
 
 			var prev = stamina;
 
+			var isDashing = character.Properties.GetFloat(PropertyName.DashRun, 0) > 0;
 			// Drain stamina during movement, recover otherwise
-			if (character.Movement.IsMoving)
+			if (isDashing)
 			{
 				var runDrain = (int)character.Properties.GetFloat(PropertyName.Sta_Run, 0);
 				stamina = Math2.Clamp(0, maxStamina, stamina - runDrain);
