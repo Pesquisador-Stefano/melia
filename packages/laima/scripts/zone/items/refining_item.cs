@@ -626,11 +626,11 @@ public class RefiningItemScripts : GeneralScript
 			}
 		}
 
-		if (isBreakItem)
-		{
-			character.SystemMessage("ItemDeleted", true, "FF0000", new MsgParameter("ITEM", invItem.Name));
-			character.Inventory.Remove(invItem, 1, InventoryItemRemoveMsg.Destroyed);
-		}
+		// if (isBreakItem)
+		// {
+		// 	character.SystemMessage("ItemDeleted", true, "FF0000", new MsgParameter("ITEM", invItem.Name));
+		// 	character.Inventory.Remove(invItem, 1, InventoryItemRemoveMsg.Destroyed);
+		// }
 
 		character.AddonMessage("EQUIP_ITEM_LIST_UPDATE");
 	}
