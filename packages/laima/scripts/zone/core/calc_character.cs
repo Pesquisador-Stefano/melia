@@ -622,7 +622,7 @@ public class CharacterCalculationsScript : GeneralScript
 		var isDashRun = properties.GetFloat(PropertyName.DashRun, 0);
 		if (isDashRun > 0 && (!Feature.IsEnabled("FreeDashingInCities") || character.Map?.Data?.Type != MapType.City))
 		{
-			var dashAmount = 500f;
+			var dashAmount = 400f;
 			if (isDashRun == 2)
 				dashAmount *= 0.9f;
 
