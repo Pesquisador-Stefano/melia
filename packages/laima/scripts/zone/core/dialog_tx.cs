@@ -456,7 +456,7 @@ public class DialogTxFunctionsScript : GeneralScript
 				return DialogTxResult.Fail;
 			}
 
-			var price = 10000;
+			var price = 1000000;
 			if (ZoneServer.Instance.Data.SocketPriceDb.TryFind(targetItem.UseLevel, out var socketPrice))
 				price = socketPrice.RemovePrice;
 
