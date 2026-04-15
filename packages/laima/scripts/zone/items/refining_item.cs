@@ -233,34 +233,13 @@ public class RefiningItemScripts : GeneralScript
 		var currentReinforcement = fromItem.Properties.GetFloat(PropertyName.Reinforce_2, 0);
 		float successRatio;
 
-		if (fromItem.Data?.Script?.StrArg == "Moru_goddess")
-		{
-			if (currentReinforcement < 5) return 100f;
-
-			successRatio = 100f - (currentReinforcement - 4) * 4f;
-			successRatio = MathF.Pow(successRatio / 100f, 3f) * 100f;
-			return MathF.Max(successRatio, 51.2f);
-		}
-
-		var isWeaponType = fromItem.Data.Group == ItemGroup.Weapon ||
-							(fromItem.Data.Group == ItemGroup.SubWeapon && fromItem.Data.EquipType1 != EquipType.Shield);
-
-		if (isWeaponType)
-		{
-			if (currentReinforcement < 5) return 100f;
-
-			successRatio = 100f - (currentReinforcement - 4) * 4f;
-			successRatio = MathF.Pow(successRatio / 100f, 3f) * 100f;
-			return MathF.Max(successRatio, 51.2f);
-		}
-		else
-		{
-			if (currentReinforcement < 5) return 100f;
-
-			successRatio = 100f - (currentReinforcement - 2) * 4f;
-			successRatio = MathF.Pow(successRatio / 100f, 3f) * 100f;
-			return MathF.Max(successRatio, 51.2f);
-		}
+		// Unified formula for all items: linear decrease from +1  
+		if (currentReinforcement == 0) return 100f;  
+		
+		// Decrease 7.14% per level to reach 50% at +7  
+		successRatio = 100f - (currentReinforcement * 7.14f);  
+		
+		return MathF.Max(successRatio, 10.0f);  
 	}
 
 	private static void UpdateMoruDigitEffect(Mob anvil, bool playEft = false)
