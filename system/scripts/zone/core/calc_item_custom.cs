@@ -461,9 +461,16 @@ public class ItemCalculationsScript : GeneralScript
 		if (ZoneServer.Instance.Data.ItemGradeDb.TryFindByGrade((int)grade, out var itemGradeData))
 			gradeRatio = itemGradeData.ReinforceRatio;
 
-		//reinforceValue += reinfBonusValue;
-		var value = (float)Math.Floor(reinforceValue + (lv * (reinforceValue * (0.08f + (float)Math.Floor((Math.Min(21, reinforceValue) - 1) / 5) * 0.015f))));
-		value *= (reinforceRatio / 100) * (gradeRatio / 100);
+		// Calculate base attack value  
+		var baseAtk = (100f + lv * 1.5f) * (gradeRatio / 100f);
+		
+		// Apply inverse level scaling: 2x at low levels, 0.33x at high levels  
+		var levelModifier = Math.Max(0.33f, 1.0f - 0.33f *(lv / 100f));
+		
+		// Reinforcement bonus is based on base attack with level scaling  
+		var value = Math.Max(5f, baseAtk * levelModifier / 10.0f - lv/4.0f ) * reinforceValue;
+		// var value = baseAtk * levelModifier * reinforceValue;
+		// value *= (reinforceRatio / 100);
 
 		var classType = item.Data.EquipType1;
 		if (classType == EquipType.Trinket) value *= 0.5f;
