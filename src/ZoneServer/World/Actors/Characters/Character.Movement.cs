@@ -12,6 +12,7 @@ using Melia.Shared.Versioning;
 using Melia.Shared.World;
 using Melia.Zone.Items.Effects;
 using Melia.Zone.Network;
+using Melia.Zone.World.Items;
 using Melia.Zone.World.Actors;
 using Melia.Zone.World.Actors.CombatEntities.Components;
 using Melia.Zone.World.Actors.Components;
@@ -223,6 +224,28 @@ namespace Melia.Zone.World.Actors.Characters
 		/// </summary>
 		public void Warp(int mapId, Position pos)
 		{
+			if (!ZoneServer.Instance.World.Maps.TryGet(mapId, out var map))
+				throw new ArgumentException("Map '" + mapId + "' not found in data.");
+
+			if (this.MapId == mapId)
+			{
+				this.Position = pos;
+				Send.ZC_SET_POS(this);
+
+				if (this.IsRiding && this.ActiveCompanion is Companion ridingCompanion)
+				{
+					ridingCompanion.Position = pos;
+					Send.ZC_SET_POS(ridingCompanion);
+				}
+				return;
+			}
+
+			if (ZoneServer.Instance.ServerList.GetZoneServers(mapId).Length == 0)
+			{
+				this.MsgBox("The map is currently unavailable. Please try again later.");
+				return;
+			}
+
 			lock (_warpLock)
 			{
 				if (this.IsWarping)
@@ -232,39 +255,17 @@ namespace Melia.Zone.World.Actors.Characters
 
 			try
 			{
-				if (!ZoneServer.Instance.World.Maps.TryGet(mapId, out var map))
-					throw new ArgumentException("Map '" + mapId + "' not found in data.");
+				this.CancelOutOfBody();
 
-				if (this.MapId == mapId)
+				if (map is DynamicMap)
 				{
-					this.Position = pos;
-					Send.ZC_SET_POS(this);
-
-					if (this.IsRiding && this.ActiveCompanion is Companion ridingCompanion)
-					{
-						ridingCompanion.Position = pos;
-						Send.ZC_SET_POS(ridingCompanion);
-					}
-
-					lock (_warpLock)
-					{
-						this.IsWarping = false;
-					}
+					this.Etc.Properties.SetFloat(PropertyName.LastWarpMapID, this.Map.Id);
+					mapId = map.Id;
 				}
-				else
-				{
-					this.CancelOutOfBody();
+				this.MapId = mapId;
+				this.Position = pos;
 
-					if (map is DynamicMap)
-					{
-						this.Etc.Properties.SetFloat(PropertyName.LastWarpMapID, this.Map.Id);
-						mapId = map.Id;
-					}
-					this.MapId = mapId;
-					this.Position = pos;
-
-					Send.ZC_MOVE_ZONE(this.Connection);
-				}
+				Send.ZC_MOVE_ZONE(this.Connection);
 			}
 			catch
 			{
@@ -362,8 +363,7 @@ namespace Melia.Zone.World.Actors.Characters
 				if (currentConnection != null && currentConnection.Account != null &&
 					ZoneServer.Instance.Database.CheckSessionKey(currentConnection.Account.Id, currentConnection.SessionKey))
 				{
-					ZoneServer.Instance.Database.SaveCharacterData(this);
-					ZoneServer.Instance.Database.SaveAccountData(currentConnection.Account, this);
+					ZoneServer.Instance.Database.SavePlayerData(this, currentConnection.Account);
 					this.SavedForWarp = true;
 					saveSuccess = true;
 				}
@@ -556,6 +556,20 @@ namespace Melia.Zone.World.Actors.Characters
 						else if (ZoneServer.Instance.Data.HeadTypeDb.TryFind(character.Gender, strArg, out var headData))
 							Send.ZC_NORMAL.UpdateCharacterLook(this.Connection, character, hairItem.Id, EquipSlot.Hair, headData.Index);
 					}
+				}
+
+				// Send briquetting (weapon/armor appearance override) look updates
+				// for any equipped item carrying a BriquettingIndex, so the
+				// swapped 3D model is rendered when this character comes into view.
+				foreach (var equipPair in character.Inventory.GetEquip())
+				{
+					var equipItem = equipPair.Value;
+					if (equipItem == null || equipItem is DummyEquipItem)
+						continue;
+
+					var briquettingIndex = (int)equipItem.Properties.GetFloat(PropertyName.BriquettingIndex);
+					if (briquettingIndex > 0)
+						Send.ZC_NORMAL.UpdateCharacterLook(this.Connection, character, briquettingIndex, equipPair.Key);
 				}
 
 				if (character.HasParty || character.HasGuild)

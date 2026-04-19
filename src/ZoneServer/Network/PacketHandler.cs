@@ -168,7 +168,7 @@ namespace Melia.Zone.Network
 					var saveStart = sw.ElapsedMilliseconds;
 					try
 					{
-						ZoneServer.Instance.Database.SaveCharacterData(charToSave);
+						ZoneServer.Instance.Database.SavePlayerData(charToSave, charToSave.Connection?.Account);
 					}
 					catch (Exception ex)
 					{
@@ -186,7 +186,7 @@ namespace Melia.Zone.Network
 					var saveStart = sw.ElapsedMilliseconds;
 					try
 					{
-						ZoneServer.Instance.Database.SaveCharacterData(existingCharacter);
+						ZoneServer.Instance.Database.SavePlayerData(existingCharacter);
 					}
 					catch (Exception ex)
 					{
@@ -376,6 +376,18 @@ namespace Melia.Zone.Network
 				Send.ZC_EQUIP_CARD_INFO(character);
 				Send.ZC_EQUIP_GEM_INFO(character);
 				Send.ZC_NORMAL.HeadgearVisibilityUpdate(character);
+
+				// Broadcast briquetting (weapon appearance)
+				foreach (var equipPair in character.Inventory.GetEquip())
+				{
+					var equipItem = equipPair.Value;
+					if (equipItem == null || equipItem is DummyEquipItem)
+						continue;
+
+					var equipBriquettingIndex = (int)equipItem.Properties.GetFloat(PropertyName.BriquettingIndex);
+					if (equipBriquettingIndex > 0)
+						Send.ZC_NORMAL.UpdateCharacterLook(character, equipBriquettingIndex, equipPair.Key);
+				}
 				Send.ZC_ADDITIONAL_SKILL_POINT(character);
 				Send.ZC_SET_DAYLIGHT_INFO(character);
 				//Send.ZC_DAYLIGHT_FIXED(character);
@@ -663,8 +675,7 @@ namespace Melia.Zone.Network
 			// would cause the deferred save in CleanUpAndSave to skip
 			// saving entirely.
 			character.SavedForWarp = true;
-			ZoneServer.Instance.Database.SaveCharacterData(character);
-			ZoneServer.Instance.Database.SaveAccountData(conn.Account, character);
+			ZoneServer.Instance.Database.SavePlayerData(character, conn.Account);
 			ZoneServer.Instance.Database.UpdateLoginState(conn.Account.Id, 0, LoginState.LoggedOut);
 
 			Log.Info("User '{0}' is leaving for character selection.", conn.Account.Name);
@@ -1823,6 +1834,13 @@ namespace Melia.Zone.Network
 				{
 					case SkillUseType.MeleeGround:
 					{
+						if (ZoneServer.Instance.SkillHandlers.TryGetHandler<IMeleeGroundSkillHandler>(skillId, out var meleeHandler))
+						{
+							skill.PrepareCancellation();
+							meleeHandler.Handle(skill, character, originPos, farPos, targets);
+							break;
+						}
+
 						if (!ZoneServer.Instance.SkillHandlers.TryGetHandler<IGroundSkillHandler>(skillId, out var handler))
 						{
 							character.ServerMessage(Localization.Get("This skill has not been implemented yet."));
@@ -4069,16 +4087,15 @@ namespace Melia.Zone.Network
 				Log.Warning("CZ_REQ_UNDERSTAFF_ENTER_ALLOW_WITH_PARTY: Character '{0}' sent party ready request but has no party.", character.Name);
 			}
 		}
-
 		/// <summary>
-		/// 
+		/// Sent by the propertyshop UI on open (via worldPVP.RequestPVPInfo).
 		/// </summary>
 		/// <param name="conn"></param>
 		/// <param name="packet"></param>
-		//[PacketHandler(Op.CZ_PVP_COMMAND)]
+		[PacketHandler(Op.CZ_PVP_COMMAND)]
 		public void CZ_PVP_COMMAND(IZoneConnection conn, Packet packet)
 		{
-			// No parameters
+			// No parameters, no response needed.
 		}
 
 		/// <summary>
@@ -6364,6 +6381,7 @@ namespace Melia.Zone.Network
 				return;
 			}
 			character.JobId = jobId;
+			Send.ZC_NORMAL.UpdateSkillUI(character);
 			character.AddonMessage(AddonMessage.UPDATE_REPRESENTATION_CLASS_ICON, "None", (int)jobId);
 		}
 
@@ -6569,14 +6587,9 @@ namespace Melia.Zone.Network
 		[PacketHandler(Op.CZ_BRIQUET)]
 		public void CZ_BRIQUET(IZoneConnection conn, Packet packet)
 		{
+			var size = packet.GetShort();
 			var targetWorldId = packet.GetLong();
 			var sourceWorldId = packet.GetLong();
-			var materialCount = packet.GetInt();
-			var unknownFlag = packet.GetByte();
-
-			var materialWorldIds = new long[materialCount];
-			for (var i = 0; i < materialCount; i++)
-				materialWorldIds[i] = packet.GetLong();
 
 			var character = conn.SelectedCharacter;
 
@@ -6588,7 +6601,7 @@ namespace Melia.Zone.Network
 				return;
 			}
 
-			// Get source item (the weapon whose appearance to copy)
+			// Get source item (the appearance source, will be consumed)
 			var sourceItem = character.Inventory.GetItem(sourceWorldId);
 			if (sourceItem == null)
 			{
@@ -6596,37 +6609,19 @@ namespace Melia.Zone.Network
 				return;
 			}
 
-			// Get all material items
-			var materialItems = new List<Item>();
-			foreach (var materialWorldId in materialWorldIds)
+			// Calculate silver cost (scales by item level and grade)
+			var lv = (double)targetItem.UseLevel;
+			var grade = Math.Min(5, (int)targetItem.Properties.GetFloat(PropertyName.ItemGrade));
+			var silverCost = (int)(lv * 100 + Math.Floor(Math.Pow(lv, 1.6) * grade * (lv / (6 - grade))));
+
+			if (!character.HasSilver(silverCost))
 			{
-				var materialItem = character.Inventory.GetItem(materialWorldId);
-				if (materialItem == null)
-				{
-					Log.Warning("CZ_BRIQUET: User '{0}' tried to briquet with a non-existent material item.", conn.Account.Name);
-					return;
-				}
-				materialItems.Add(materialItem);
+				character.ServerMessage(Localization.Get("Not enough silver for appearance change."));
+				return;
 			}
 
-			// Calculate silver cost matching client formula:
-			// price = (lv * 100) + floor((lv^1.6 * grade) * (lv / (7 - grade)))
-			var lv = (double)targetItem.UseLevel;
-			var grade = Math.Min(6, (int)targetItem.Properties.GetFloat(PropertyName.ItemGrade));
-			var silverCost = (int)(lv * 100 + Math.Floor(Math.Pow(lv, 1.6) * grade * (lv / (7 - grade))));
-
-			// Check silver
-			if (!character.HasSilver(silverCost))
-				return;
-
-			// Remove source item
+			// Consume the appearance source item and silver
 			character.Inventory.Remove(sourceItem, 1, InventoryItemRemoveMsg.Given);
-
-			// Remove material items
-			foreach (var materialItem in materialItems)
-				character.Inventory.Remove(materialItem, 1, InventoryItemRemoveMsg.Given);
-
-			// Remove silver cost
 			character.Inventory.Remove(ItemId.Silver, silverCost, InventoryItemRemoveMsg.Given);
 
 			// Set the briquetting appearance on the target item
@@ -6635,11 +6630,101 @@ namespace Melia.Zone.Network
 			// Update item properties to client
 			Send.ZC_OBJECT_PROPERTY(character.Connection, targetItem);
 
-			// Send success addon message
-			Send.ZC_ADDON_MSG(character, "SUCCESS_BRIQUETTING", 0, targetWorldId.ToString());
+			// Send success addon message (argNum = appearance source class id for result popup)
+			Send.ZC_ADDON_MSG(character, "SUCCESS_BRIQUETTING", sourceItem.Id, targetWorldId.ToString());
 
 			// Broadcast appearance update so other players see the change
 			Send.ZC_UPDATED_PCAPPEARANCE(character);
+		}
+
+		/// <summary>
+		/// Client requests the current balance for a property-shop point
+		/// (e.g. Mercenary Badge count).
+		/// </summary>
+		/// <param name="conn"></param>
+		/// <param name="packet"></param>
+		[PacketHandler(Op.CZ_SHOP_POINT_GET)]
+		public void CZ_SHOP_POINT_GET(IZoneConnection conn, Packet packet)
+		{
+			// Packet body (fixed size 54): padding + 32-byte point name + tail
+			packet.GetBin(12);
+			var pointName = packet.GetString(32);
+
+			var character = conn.SelectedCharacter;
+
+			// Find the shop that uses this point name, read its currency property
+			var shop = Scripting.PropertyShops.FindByPointName(pointName);
+			if (shop == null)
+				return;
+
+			var balance = (int)character.Connection.Account.Properties.GetFloat(shop.CurrencyProperty);
+			Send.ZC_SHOP_POINT_UPDATE(conn, pointName, balance);
+		}
+
+		/// <summary>
+		/// Client is buying an item from a property/point shop (e.g. Mercenary
+		/// Badge Shop). The server looks up the shop+product and deducts the
+		/// currency item.
+		/// </summary>
+		/// <param name="conn"></param>
+		/// <param name="packet"></param>
+		[PacketHandler(Op.CZ_BUY_PROPERTYSHOP_ITEM)]
+		public void CZ_BUY_PROPERTYSHOP_ITEM(IZoneConnection conn, Packet packet)
+		{
+			var size = packet.GetShort();
+			var shopName = packet.GetString(32);
+			var count = packet.GetInt();
+
+			var character = conn.SelectedCharacter;
+
+			if (!Scripting.PropertyShops.TryGet(shopName, out var shop))
+			{
+				Log.Warning("CZ_BUY_PROPERTYSHOP_ITEM: User '{0}' tried to buy from unknown shop '{1}'.", conn.Account.Name, shopName);
+				return;
+			}
+
+			if (count <= 0)
+				return;
+
+			var purchases = new List<(int ProductIndex, int Amount)>(count);
+			var totalCost = 0;
+			for (var i = 0; i < count; ++i)
+			{
+				var productIndex = packet.GetInt();
+				var amount = packet.GetInt();
+
+				if (amount <= 0)
+					amount = 1;
+
+				if (productIndex < 0 || productIndex >= shop.Items.Count)
+				{
+					Log.Warning("CZ_BUY_PROPERTYSHOP_ITEM: User '{0}' tried to buy invalid product index {1} from '{2}'.", conn.Account.Name, productIndex, shopName);
+					return;
+				}
+
+				purchases.Add((productIndex, amount));
+				totalCost += shop.Items[productIndex].Price * amount;
+			}
+
+			var properties = character.Connection.Account.Properties;
+			var currentBalance = (int)properties.GetFloat(shop.CurrencyProperty);
+			if (currentBalance < totalCost)
+			{
+				character.ServerMessage(Localization.Get("Not enough Mercenary Badges."));
+				return;
+			}
+
+			character.ModifyAccountProperty(shop.CurrencyProperty, -totalCost);
+
+			foreach (var (productIndex, amount) in purchases)
+			{
+				var product = shop.Items[productIndex];
+				character.Inventory.Add(product.ItemId, product.Amount * amount, InventoryAddType.Buy);
+			}
+
+			// Refresh the balance in the UI
+			var balance = (int)properties.GetFloat(shop.CurrencyProperty);
+			Send.ZC_SHOP_POINT_UPDATE(conn, shop.PointName, balance);
 		}
 	}
 }

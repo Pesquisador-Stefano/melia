@@ -1477,6 +1477,114 @@ namespace Melia.Zone.Database
 			}
 		}
 
+		/// <summary>
+		/// INTERNAL USE: Saves account fields within an existing transaction.
+		/// </summary>
+		internal void InternalSaveAccountFields(Account account, MySqlConnection conn, MySqlTransaction trans)
+		{
+			using (var cmd = new UpdateCommand("UPDATE `accounts` SET {parameters} WHERE `accountId` = @accountId", conn, trans))
+			{
+				cmd.AddParameter("@accountId", account.Id);
+				cmd.Set("settings", account.Settings.ToString());
+				cmd.Set("premiumTokenExpiration", account.Premium.Token.Expiration);
+				cmd.Set("medals", account.Medals);
+				cmd.Set("giftMedals", account.GiftMedals);
+				cmd.Set("premiumMedals", account.PremiumMedals);
+				cmd.Set("language", account.Language);
+				cmd.Execute();
+			}
+		}
+
+		/// <summary>
+		/// INTERNAL USE: Saves chat macros within an existing transaction.
+		/// </summary>
+		internal void InternalSaveChatMacros(Account account, MySqlConnection conn, MySqlTransaction trans)
+		{
+			var macros = account.GetChatMacros().ToList();
+
+			if (!macros.Any())
+			{
+				using (var mc = new MySqlCommand("DELETE FROM `chatmacros` WHERE `accountId` = @accountId", conn, trans))
+				{
+					mc.Parameters.AddWithValue("@accountId", account.Id);
+					mc.ExecuteNonQuery();
+				}
+				return;
+			}
+
+			var macroIndicesInMemory = new HashSet<int>(macros.Select(m => m.Index));
+
+			foreach (var macro in macros)
+			{
+				using (var cmd = new MySqlCommand(
+					"INSERT INTO `chatmacros` (`accountId`, `index`, `message`, `pose`) VALUES (@accountId, @index, @message, @pose) " +
+					"ON DUPLICATE KEY UPDATE `message` = VALUES(`message`), `pose` = VALUES(`pose`)", conn, trans))
+				{
+					cmd.Parameters.AddWithValue("@accountId", account.Id);
+					cmd.Parameters.AddWithValue("@index", macro.Index);
+					cmd.Parameters.AddWithValue("@message", macro.Message);
+					cmd.Parameters.AddWithValue("@pose", macro.Pose);
+					cmd.ExecuteNonQuery();
+				}
+			}
+
+			var macroIndicesInDb = new HashSet<int>();
+			using (var cmd = new MySqlCommand("SELECT `index` FROM `chatmacros` WHERE `accountId` = @accountId", conn, trans))
+			{
+				cmd.Parameters.AddWithValue("@accountId", account.Id);
+				using (var reader = cmd.ExecuteReader())
+				{
+					while (reader.Read())
+						macroIndicesInDb.Add(reader.GetInt32(0));
+				}
+			}
+
+			var indicesToDelete = macroIndicesInDb.Except(macroIndicesInMemory).ToList();
+			if (indicesToDelete.Any())
+			{
+				var deleteParams = indicesToDelete.Select((idx, i) => $"@idx{i}").ToArray();
+				using (var cmd = new MySqlCommand($"DELETE FROM `chatmacros` WHERE `accountId` = @accountId AND `index` IN ({string.Join(",", deleteParams)})", conn, trans))
+				{
+					cmd.Parameters.AddWithValue("@accountId", account.Id);
+					for (var i = 0; i < indicesToDelete.Count; i++)
+						cmd.Parameters.AddWithValue(deleteParams[i], indicesToDelete[i]);
+					cmd.ExecuteNonQuery();
+				}
+			}
+		}
+
+		/// <summary>
+		/// INTERNAL USE: Saves revealed maps within an existing transaction.
+		/// </summary>
+		internal void InternalSaveRevealedMaps(Account account, MySqlConnection conn, MySqlTransaction trans)
+		{
+			using (var mc = new MySqlCommand("DELETE FROM `revealedmaps` WHERE `accountId` = @accountId", conn, trans))
+			{
+				mc.Parameters.AddWithValue("@accountId", account.Id);
+				mc.ExecuteNonQuery();
+			}
+
+			var revealedMaps = account.GetRevealedMaps();
+			if (revealedMaps == null) return;
+
+			using (var batch = new BatchInsertCommand("revealedmaps", null, conn, trans))
+			{
+				foreach (var revealedMap in revealedMaps)
+				{
+					batch.AddRow(new Dictionary<string, object>
+					{
+						{ "accountId", account.Id },
+						{ "map", revealedMap.MapId },
+						{ "explored", revealedMap.Explored },
+						{ "percentage", revealedMap.Percentage }
+					});
+				}
+
+				if (batch.HasRows)
+					batch.Execute();
+			}
+		}
+
 		#endregion // Internal Save Methods
 
 		#region Helper Methods

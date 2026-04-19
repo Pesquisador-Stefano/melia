@@ -36,6 +36,15 @@ namespace Melia.Zone.World.Maps
 		private static int _dormancyBatchMobs;
 		private static readonly object _dormancyLogLock = new();
 
+		// Global throttle to prevent all maps from entering dormancy on the
+		// same tick after the startup grace period elapses. Without this,
+		// 400+ maps would unload simultaneously and stall the server.
+		private const int DormancyMaxPerWindow = 20;
+		private static readonly TimeSpan DormancyWindow = TimeSpan.FromSeconds(10);
+		private static readonly object _dormancyThrottleLock = new();
+		private static DateTime _dormancyWindowStart = DateTime.MinValue;
+		private static int _dormancyWindowCount;
+
 		#region Constants
 		public const int DefaultLayer = 0;
 		public const int VisibleRange = 500;
@@ -128,6 +137,12 @@ namespace Melia.Zone.World.Maps
 			this.WorldId = id;
 			this.ClassName = name;
 			this.Load();
+
+			// Maps start dormant so spawners don't populate them until a
+			// player actually enters. Cities and instances are excluded,
+			// matching the same rules used by the runtime dormancy check.
+			if (!this.IsCity && !this.IsInstance)
+				this.IsDormant = true;
 		}
 
 		private void Load()
@@ -174,15 +189,18 @@ namespace Melia.Zone.World.Maps
 
 			if (!this.HasCharacters && !this.IsCity && !this.IsInstance)
 			{
+				var eligible = false;
+
 				// Player left recently — enter dormancy after grace period
 				if (_lastPlayerLeftTime != DateTime.MinValue && (DateTime.Now - _lastPlayerLeftTime) >= EntityUpdateGracePeriod)
-				{
-					this.EnterDormancy();
-					return;
-				}
+					eligible = true;
 
-				// Map never had a player — enter dormancy after startup grace period
-				if (_lastPlayerLeftTime == DateTime.MinValue && (DateTime.Now - _createdTime) >= EntityUpdateGracePeriod)
+				// Map never had a player — eligible immediately on startup
+				// (throttle still spreads the actual unload work over time)
+				else if (_lastPlayerLeftTime == DateTime.MinValue)
+					eligible = true;
+
+				if (eligible && TryAcquireDormancySlot())
 				{
 					this.EnterDormancy();
 					return;
@@ -427,6 +445,31 @@ namespace Melia.Zone.World.Maps
 		}
 
 		/// <summary>
+		/// Attempts to reserve a slot in the current dormancy throttle
+		/// window. Returns false if the per-window cap has been hit,
+		/// deferring the dormancy transition to a later tick so the
+		/// server isn't stalled unloading hundreds of maps at once.
+		/// </summary>
+		private static bool TryAcquireDormancySlot()
+		{
+			lock (_dormancyThrottleLock)
+			{
+				var now = DateTime.Now;
+				if (now - _dormancyWindowStart >= DormancyWindow)
+				{
+					_dormancyWindowStart = now;
+					_dormancyWindowCount = 0;
+				}
+
+				if (_dormancyWindowCount >= DormancyMaxPerWindow)
+					return false;
+
+				_dormancyWindowCount++;
+				return true;
+			}
+		}
+
+		/// <summary>
 		/// Logs a summary of maps that entered dormancy since the last
 		/// flush. Called from dormant map updates so the log appears
 		/// shortly after the batch completes.
@@ -603,6 +646,16 @@ namespace Melia.Zone.World.Maps
 			// the map wakes up.
 			if (this.IsDormant && monster is Mob mob && mob.Spawner != null)
 				return;
+
+			// Dormant maps skip UpdateEntities, so the queue never drains.
+			// Add non-spawner monsters (NPCs, warps, etc.) directly so
+			// their Map reference is set and lookups like HandleInteWarp
+			// see a valid map id before a player ever wakes the map.
+			if (this.IsDormant)
+			{
+				this.AddMonsterInternal(monster);
+				return;
+			}
 
 			_addMonsters.Enqueue(monster);
 		}
@@ -2223,15 +2276,15 @@ namespace Melia.Zone.World.Maps
 			var result = new List<Character>();
 			lock (_characters)
 			{
-				foreach (var a in _characters.Values)
+				foreach (var mapChar in _characters.Values)
 				{
-					if (radius > 0 && !a.Position.InRange2D(position, radius))
+					if (radius > 0 && !mapChar.Position.InRange2D(position, radius))
 						continue;
-					if (a.Connection.Party?.ObjectId != party.ObjectId)
+					if (mapChar.Connection.Party?.ObjectId != party.ObjectId)
 						continue;
-					if (a.IsDead != !areAlive)
+					if (mapChar.IsDead != !areAlive)
 						continue;
-					result.Add(a);
+					result.Add(mapChar);
 				}
 			}
 			return result;

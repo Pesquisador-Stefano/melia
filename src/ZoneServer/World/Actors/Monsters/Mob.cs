@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Melia.Shared.Data.Database;
 using Melia.Shared.Game.Const;
@@ -36,6 +37,7 @@ namespace Melia.Zone.World.Actors.Monsters
 	public partial class Mob : Actor, IMonster, ICombatEntity, IUpdateable
 	{
 		private readonly object _hpLock = new();
+		private int _killed;
 		private Position _position;
 
 		/// <summary>
@@ -516,15 +518,8 @@ namespace Melia.Zone.World.Actors.Monsters
 				Send.MonsterSkillBalloonCancel(this);
 			}
 
-			// Apply damage to shield, then handle stagger and HP damage.
+			// Apply damage to shield, then apply HP damage.
 			damage = this.ApplyToShield(damage);
-
-			// Increase damage if the mob is staggered.
-			if (this.IsStaggered())
-			{
-				// Apply a damage multiplier while staggered (e.g., 1.5x).
-				damage *= 1.5f;
-			}
 
 			var currentHp = this.Hp;
 
@@ -562,21 +557,14 @@ namespace Melia.Zone.World.Actors.Monsters
 				{
 					var remainingShieldHealth = this.Shield;
 					this.Shield = 0;
-
-					if (!this.CanStagger())
-						damage -= remainingShieldHealth / 5;
-					else
-						this.ApplyStagger();
-
+					damage -= remainingShieldHealth / 5;
 					Send.ZC_UPDATE_SHIELD(this, this.Shield, 1);
 				}
 				else
 				{
 					this.Shield -= (int)shieldDamage;
 					Send.ZC_UPDATE_SHIELD(this, this.Shield, 0);
-
-					if (!this.CanStagger())
-						return 0;
+					return 0;
 				}
 			}
 
@@ -589,6 +577,10 @@ namespace Melia.Zone.World.Actors.Monsters
 		/// <param name="killer"></param>
 		public virtual void Kill(ICombatEntity killer)
 		{
+			// Guarantee single call
+			if (Interlocked.Exchange(ref _killed, 1) != 0)
+				return;
+
 			Send.ZC_SKILL_CAST_CANCEL(this);
 			Send.ZC_SKILL_DISABLE(this);
 			Send.ZC_DEAD(this);
@@ -671,7 +663,7 @@ namespace Melia.Zone.World.Actors.Monsters
 		/// </summary>
 		/// <param name="killer"></param>
 		/// <returns></returns>
-		private Character GetKillBeneficiary(ICombatEntity killer)
+		public Character GetKillBeneficiary(ICombatEntity killer)
 		{
 			if (killer == null)
 				return null;
@@ -1729,12 +1721,25 @@ namespace Melia.Zone.World.Actors.Monsters
 		}
 
 		/// <summary>
-		/// Can stagger
+		/// Returns true if this mob can be staggered by the damage-threshold
+		/// interrupt system. Bosses, Elite, and Mythic monsters are immune.
 		/// </summary>
 		/// <returns></returns>
 		public bool CanStagger()
 		{
-			return this.Rank == MonsterRank.Boss;
+			if (this is Companion || this is Summon)
+				return false;
+
+			if (this.Rank == MonsterRank.Boss || this.Rank == MonsterRank.Elite)
+				return false;
+
+			if (this.IsBuffActive(BuffId.EliteMonsterBuff))
+				return false;
+
+			if (this.IsMythicMonster())
+				return false;
+
+			return true;
 		}
 
 		/// <summary>

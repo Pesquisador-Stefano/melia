@@ -62,6 +62,7 @@ namespace Melia.Zone.World.Actors.Characters
 				this.FullHeal();
 
 			Send.ZC_OBJECT_PROPERTY(this);
+			Send.ZC_NORMAL.UpdateSkillUI(this);
 			this.AddonMessage("NOTICE_Dm_levelup_skill", "!@#$Auto_KeulLeSeu_LeBeli_SangSeungHayeossSeupNiDa#@!", 3);
 			this.PlayEffect("F_pc_joblevel_up", 3);
 			Send.ZC_SKILL_LIST(this);
@@ -310,12 +311,12 @@ namespace Melia.Zone.World.Actors.Characters
 		protected static void InitCommon(Character character)
 		{
 			LearnSkill(character, SkillId.Default);
-			LearnSkill(character, SkillId.Common_shovel);
-			LearnSkill(character, SkillId.Common_otlflag);
-			LearnSkill(character, SkillId.Common_dumbbell);
-			LearnSkill(character, SkillId.Common_vuvuzela);
-			LearnSkill(character, SkillId.Common_snowspray);
-			LearnSkill(character, SkillId.Common_balloonpipe);
+			LearnCommonSkill(character, SkillId.Common_shovel);
+			LearnCommonSkill(character, SkillId.Common_otlflag);
+			LearnCommonSkill(character, SkillId.Common_dumbbell);
+			LearnCommonSkill(character, SkillId.Common_vuvuzela);
+			LearnCommonSkill(character, SkillId.Common_snowspray);
+			LearnCommonSkill(character, SkillId.Common_balloonpipe);
 
 			LearnAbility(character, AbilityId.Cloth);
 			LearnAbility(character, AbilityId.Leather);
@@ -421,6 +422,20 @@ namespace Melia.Zone.World.Actors.Characters
 				return;
 
 			var skill = new Skill(character, skillId, 1);
+			character.Skills.AddSilent(skill);
+		}
+
+		/// <summary>
+		/// Adds the skill to the character silently as a common skill if they
+		/// don't already have it and the skill exists in the database.
+		/// Common skills appear in the common skills tab.
+		/// </summary>
+		protected static void LearnCommonSkill(Character character, SkillId skillId)
+		{
+			if (character.Skills.Has(skillId) || !ZoneServer.Instance.Data.SkillDb.TryFind(skillId, out _))
+				return;
+
+			var skill = new Skill(character, skillId, 1, isCommon: true);
 			character.Skills.AddSilent(skill);
 		}
 

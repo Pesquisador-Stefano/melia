@@ -89,6 +89,13 @@ namespace Melia.Zone.Scripting.AI
 		protected ICombatEntity? _target;
 		private DateTime _targetAcquiredTime;
 
+		// Rolling sample of the target's distance to the mob, used to
+		// decide whether the target is closing in. Prediction/early-cast
+		// behavior only kicks in when the target is approaching — if
+		// they're moving away we fall back to regular in-range gating.
+		private double _lastTargetDistance;
+		private DateTime _lastTargetDistanceTime;
+
 		// State tracking for advanced conditions
 		private readonly Dictionary<string, object> _tempVars = new();
 		protected SkillId _lastUsedSkill = SkillId.None;
@@ -246,6 +253,7 @@ namespace Melia.Zone.Scripting.AI
 				this.UpdatePhase();
 				this.HandleEventAlerts();
 				this.ExecuteDuringActions();
+				this.SampleTargetDistance();
 
 				this.Heartbeat();
 			}
@@ -256,6 +264,45 @@ namespace Melia.Zone.Scripting.AI
 				Console.WriteLine($"Exception during AiScript.Update for entity '{entityName}' (Handle: {entityHandle}): {ex}");
 			}
 		}
+		/// <summary>
+		/// Rolls the target's distance sample on a 100ms window. The
+		/// previous sample is retained so <see cref="IsTargetApproaching"/>
+		/// can compare now-vs-then to infer closing/fleeing intent
+		/// without needing access to the target's velocity.
+		/// </summary>
+		private void SampleTargetDistance()
+		{
+			if (_target == null)
+			{
+				_lastTargetDistanceTime = default;
+				return;
+			}
+
+			var now = DateTime.UtcNow;
+			if (_lastTargetDistanceTime != default && (now - _lastTargetDistanceTime) < TimeSpan.FromMilliseconds(100))
+				return;
+
+			_lastTargetDistance = this.Entity.Position.Get2DDistance(_target.Position);
+			_lastTargetDistanceTime = now;
+		}
+
+		/// <summary>
+		/// Returns true if the target's distance to the mob is stable or
+		/// decreasing relative to the last ~100ms sample. No sample yet
+		/// (fresh target) defaults to true so the first cast isn't
+		/// suppressed. A small epsilon absorbs jitter around standing
+		/// still, so idle targets still count as "approaching".
+		/// </summary>
+		private bool IsTargetApproaching()
+		{
+			if (_target == null) return false;
+			if (_lastTargetDistanceTime == default) return true;
+
+			var currentDist = this.Entity.Position.Get2DDistance(_target.Position);
+			const double epsilon = 2.0;
+			return currentDist <= _lastTargetDistance + epsilon;
+		}
+
 		protected virtual void CheckEnemies()
 		{
 			var mostHated = this.GetMostHated();
@@ -618,16 +665,35 @@ namespace Melia.Zone.Scripting.AI
 					continue;
 				}
 
-				// Get attack range for the skill
-				var attackRange = this.GetAttackRange(skill);
+				// Use the skill's full attack range for the in-range gate;
+				// the mob needs to actually close to max range before
+				// committing to the aim step.
+				var maxAttackRange = this.GetAttackRange(skill);
 
-				// Move into range if needed
-				if (!this.InRangeOf(_target, attackRange))
+				// The cast can commit when the predicted target position
+				// (at skill resolve time) is within MaxR/2 of the mob —
+				// even if the target isn't currently in range. Only fires
+				// on a closing target: if they're moving away we fall
+				// back to normal in-range gating so the mob doesn't chain
+				// predictive casts at a fleeing target's back.
+				bool CanCommitCast()
+				{
+					if (!this.IsTargetApproaching())
+						return false;
+
+					var shootSec = (float)skill.Properties.ShootTime.TotalSeconds;
+					var leadPos = this.GetLeadPosition(_target, shootSec);
+					return this.Entity.Position.InRange2D(leadPos, maxAttackRange * 0.5f);
+				}
+
+				// Move into range if needed (and the lead-based commit
+				// isn't already satisfied).
+				if (!this.InRangeOf(_target, maxAttackRange) && !CanCommitCast())
 				{
 					if (RangeType == AttackerRangeType.Melee)
-						yield return this.MoveToAttack(_target, attackRange);
+						yield return this.MoveToAttack(_target, maxAttackRange, skill);
 					else if (RangeType == AttackerRangeType.Ranged)
-						yield return this.MoveToRangedAttack(_target, attackRange);
+						yield return this.MoveToRangedAttack(_target, maxAttackRange);
 					else
 					{
 						if (this.Entity is Mob mob)
@@ -648,9 +714,20 @@ namespace Melia.Zone.Scripting.AI
 					}
 				}
 
-				// Attack if in range and able
-				if (this.InRangeOf(_target, attackRange) && this.CanUseSkill(skill, _target))
+				// Attack if in range (current or predicted) and able
+				if ((this.InRangeOf(_target, maxAttackRange) || CanCommitCast()) && this.CanUseSkill(skill, _target))
 				{
+					// Commit to the aim: solve for the lunge destination
+					// that places the mob at MaxR/2 from where the target
+					// will be when the cast resolves (accounting for
+					// travel + shoot time), walk there, then attack.
+					yield return this.PreCastLunge(skill, maxAttackRange);
+
+					// Re-verify skill is still usable after the lunge (may have
+					// been staggered, silenced, or target may have died).
+					if (!this.CanUseSkill(skill, _target))
+						continue;
+
 					yield return this.UseSkill(skill, _target);
 
 					// After skill completes, check if we're feared
@@ -1025,6 +1102,9 @@ namespace Melia.Zone.Scripting.AI
 					amount *= (1 + hateRate);
 			}
 
+			if (entity is Companion)
+				amount /= 3f;
+
 			// Increase the hate level at the normal rate up to the
 			// min aggro level. Once we reach that point we lower
 			// the hate increase so it will still accumulate for
@@ -1338,6 +1418,36 @@ namespace Melia.Zone.Scripting.AI
 		}
 
 		/// <summary>
+		/// Fraction of MaxHp a single hit must deal to stagger the entity.
+		/// Scales with the mob's effective size so bigger targets resist
+		/// interruption more than small ones. Subclasses may override.
+		/// </summary>
+		protected virtual float StaggerThreshold
+		{
+			get
+			{
+				if (this.Entity is not Mob mob)
+					return 0.10f;
+
+				return mob.EffectiveSize switch
+				{
+					SizeType.L => 0.15f,
+					SizeType.XL or SizeType.XXL or SizeType.XXXL or SizeType.EX => 0.20f,
+					SizeType.M or SizeType.PC => 0.10f,
+					_ => 0.05f,
+				};
+			}
+		}
+
+		/// <summary>
+		/// Minimum time between consecutive staggers, preventing chain-lock
+		/// from multi-hit AoE and DoT ticks.
+		/// </summary>
+		protected virtual TimeSpan StaggerCooldown => TimeSpan.FromMilliseconds(800);
+
+		private DateTime _lastStaggerTime = DateTime.MinValue;
+
+		/// <summary>
 		/// Called when the entity takes damage. Can be overridden for reactive behaviors.
 		/// Equivalent to a TakeDamage hook.
 		/// </summary>
@@ -1345,6 +1455,25 @@ namespace Melia.Zone.Scripting.AI
 		/// <param name="damage">The amount of damage taken.</param>
 		protected virtual void OnTakeDamage(ICombatEntity attacker, float damage)
 		{
+			// Stagger: a single hit above the damage-% threshold interrupts
+			// the current attack animation with a small motion knockback,
+			// giving burst/defensive play a counter to mob wind-ups.
+			if (damage <= 0 || attacker == null)
+				return;
+
+			var maxHp = this.Entity.MaxHp;
+			if (maxHp <= 0)
+				return;
+
+			if ((damage / maxHp) < this.StaggerThreshold)
+				return;
+
+			var now = DateTime.UtcNow;
+			if ((now - _lastStaggerTime) < this.StaggerCooldown)
+				return;
+
+			if (this.Entity.ApplyStagger(attacker))
+				_lastStaggerTime = now;
 		}
 
 		/// <summary>

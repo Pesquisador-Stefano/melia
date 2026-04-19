@@ -1657,7 +1657,7 @@ namespace Melia.Zone.Network
 			if (Versions.Client <= KnownVersions.ClosedBeta1)
 				return;
 
-			const int ItemsPerPage = 500;
+			const int ItemsPerPage = 50;
 			var items = character.Inventory.GetItems().ToList();
 			var totalItems = items.Count;
 			var totalPages = (int)Math.Ceiling(totalItems / (double)ItemsPerPage);
@@ -5503,6 +5503,24 @@ namespace Melia.Zone.Network
 		}
 
 		/// <summary>
+		/// Updates a property-shop point (e.g. mercenary badge balance shown
+		/// in the Mercenary Badge Shop / propertyshop UI).
+		/// </summary>
+		/// <param name="conn"></param>
+		/// <param name="pointName">Shop-point string, e.g. "uphill_defense_shoppoint".</param>
+		/// <param name="pointValue">Current balance.</param>
+		public static void ZC_SHOP_POINT_UPDATE(IZoneConnection conn, string pointName, int pointValue)
+		{
+			using var packet = Packet.Rent(Op.ZC_SHOP_POINT_UPDATE);
+
+			packet.PutEmptyBin(12);
+			packet.PutString(pointName, 32);
+			packet.PutInt(pointValue);
+
+			conn.Send(packet);
+		}
+
+		/// <summary>
 		/// Set your character state as friendly or hostile mode?
 		/// </summary>
 		/// <param name="conn"></param>
@@ -6362,7 +6380,7 @@ namespace Melia.Zone.Network
 		{
 			const int ItemsPerPage = 10;
 			var totalItems = items.Count;
-			var totalPages = (int)Math.Ceiling(totalItems / (double)ItemsPerPage);
+			var totalPages = Math.Max(1, (int)Math.Ceiling(totalItems / (double)ItemsPerPage));
 
 			var orderedItems = items.OrderBy(a => a.Key).ToList();
 

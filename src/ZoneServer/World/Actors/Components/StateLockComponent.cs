@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using Melia.Shared.Game.Const;
 using Melia.Zone.Network;
+using Melia.Zone.Scripting.AI;
 using Melia.Zone.World.Actors.Characters;
 using Melia.Zone.World.Actors.CombatEntities.Components;
 using Melia.Zone.World.Actors.Monsters;
@@ -58,12 +59,12 @@ namespace Melia.Zone.World.Actors.Components
 			this.RegisterState(new(StateType.KnockedBack, [LockType.Movement, LockType.Attack]));
 			this.RegisterState(new(StateType.KnockedDown, [LockType.Movement, LockType.Attack, LockType.GetKnockedBack]));
 			this.RegisterState(new(StateType.Silenced, [LockType.Attack]));
-			this.RegisterState(new(StateType.Staggered, [LockType.Movement, LockType.Attack]));
 			this.RegisterState(new(StateType.Stunned, [LockType.Movement, LockType.Attack]));
 			this.RegisterState(new(StateType.Sleep, [LockType.Movement, LockType.Attack]));
 			this.RegisterState(new(StateType.Petrified, [LockType.Movement, LockType.Attack, LockType.GetKnockedBack]));
 			this.RegisterState(new(StateType.Raised, [LockType.Movement, LockType.Attack, LockType.GetKnockedBack]));
 			this.RegisterState(new(StateType.Captured, [LockType.Movement, LockType.Attack, LockType.GetTargeted]));
+			this.RegisterState(new(StateType.Fear, [LockType.Attack]));
 		}
 
 		/// <summary>
@@ -183,6 +184,11 @@ namespace Melia.Zone.World.Actors.Components
 			{
 				if (entity.Components.TryGet<CombatComponent>(out var combat))
 					combat.InterruptCasting();
+
+				entity.Components.Get<BaseSkillComponent>()?.CancelCurrentSkill();
+
+				if (entity.Components.TryGet<AiComponent>(out var ai))
+					ai.Script.QueueEventAlert(new CancelSkillAlert());
 			}
 		}
 
@@ -280,7 +286,7 @@ namespace Melia.Zone.World.Actors.Components
 			if (movementLockChanged)
 				this.ApplyMovementLockEffects();
 			if (attackLockChanged)
-				this.ApplyAttackLockEffects();
+				this.ApplyAttackLockEffects();			
 		}
 
 		/// <summary>
@@ -461,10 +467,10 @@ namespace Melia.Zone.World.Actors.Components
 		public const string Petrified = nameof(Petrified);
 		public const string Raised = nameof(Raised);
 		public const string Silenced = nameof(Silenced);
-		public const string Staggered = nameof(Staggered);
 		public const string Stunned = nameof(Stunned);
 		public const string Sleep = nameof(Sleep);
 		public const string Captured = nameof(Captured);
+		public const string Fear = nameof(Fear);
 	}
 
 	/// <summary>
